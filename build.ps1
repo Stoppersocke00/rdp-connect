@@ -1,0 +1,1 @@
+Invoke-ps2exe "rdp-connect.ps1" -iconFile "icons\170.ico"
