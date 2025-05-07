@@ -1,6 +1,14 @@
 # RDP Connect
 
-**RDP Connect** is a lightweight, customizable RDP session launcher built entirely in PowerShell.  
+**RDP Connect** is a lightweight, customizable RDP session launcher built entirely in PowerShell.
+
+Designed for use as a thin client interface, kiosk-mode launcher, or a simple GUI-based RDP frontend, it’s ideal for:
+
+- **RDP Thin Clients**
+- **Kiosk Terminals**
+- **Remote Desktop Environments**
+- **PowerShell-based automation tools**
+
 It provides a simple GUI for launching remote desktop sessions, managing multiple display options, and even supports a full **kiosk mode** to lock down a Windows session to only the RDP client GUI.
 
 ---
