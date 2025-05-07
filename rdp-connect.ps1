@@ -1,8 +1,8 @@
-﻿Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Web.Extensions
 
-$ConfigPath = "$env:AppData\RDP-Connect\Config"
+$ConfigPath = "$env:AppData\RDP-Connect\Config.json"
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $System32Path = "$env:windir\System32"
 $ExeName = "rdp-connect.exe"
@@ -60,29 +60,63 @@ function Load-Config {
     if (-not (Test-Path $ConfigPath)) {
         New-Item -ItemType Directory -Force -Path (Split-Path $ConfigPath) | Out-Null
 
-        # → Verknüpfung bei erstem Start anlegen
         if (-not (Test-Path $ShortcutPath)) {
             New-DesktopShortcut -targetPath $LocalExePath
         }
 
         return [PSCustomObject]@{
-            RdpServer  = "localhost"
-            RdpFile    = "C:\Users\Stoppersocke\Desktop\default.rdp"
-            Fullscreen = $true
-            MultiMon   = $true
-            KioskMode  = $false
+            RdpServer         = "localhost"
+            RdpFile           = ""
+            Gateway           = ""
+            Fullscreen        = $true
+            Width             = ""
+            Height            = ""
+            Admin             = $false
+            Public            = $true
+            MultiMon          = $true
+            RestrictedAdmin   = $false
+            RemoteGuard       = $false
+            Prompt            = $true
+            ShadowID          = ""
+            Control           = $false
+            NoConsentPrompt   = $false
+            KioskMode         = $false
         }
     } else {
         $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-        if (-not ($json.PSObject.Properties.Name -contains "KioskMode")) {
-            $json | Add-Member -MemberType NoteProperty -Name KioskMode -Value $false
+
+        $defaultValues = @{
+            RdpServer       = "localhost"
+            RdpFile         = ""
+            Gateway         = ""
+            Fullscreen      = $true
+            Width           = ""
+            Height          = ""
+            Admin           = $false
+            Public          = $false
+            MultiMon        = $true
+            RestrictedAdmin = $false
+            RemoteGuard     = $false
+            Prompt          = $true
+            ShadowID        = ""
+            Control         = $false
+            NoConsentPrompt = $false
+            KioskMode       = $false
+            DisablePasswordSaving = $false
         }
+
+        foreach ($key in $defaultValues.Keys) {
+            if (-not ($json.PSObject.Properties.Name -contains $key)) {
+                $json | Add-Member -MemberType NoteProperty -Name $key -Value $defaultValues[$key]
+            }
+        }
+
         return $json
     }
 }
 
 function Save-Config($config) {
-    $config | ConvertTo-Json | Set-Content -Path $ConfigPath
+    $config | ConvertTo-Json -Depth 3 | Set-Content -Path $ConfigPath -Encoding UTF8
 }
 
 function Show-ConfigForm {
@@ -90,40 +124,91 @@ function Show-ConfigForm {
 
     $form = New-Object Windows.Forms.Form
     $form.Text = "RDP Konfiguration"
-    $form.Size = New-Object Drawing.Size(440, 370)
+    $form.Size = New-Object Drawing.Size(600, 620)
     $form.StartPosition = "CenterScreen"
     $form.TopMost = $true
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
 
     $dll = "C:\Windows\System32\imageres.dll"
     $form.Icon = Get-FormIcon -dllPath $dll -iconIndex 64
 
-    $lbl1 = New-Object Windows.Forms.Label
-    $lbl1.Text = "RDP-Server:"
-    $lbl1.Location = '10,20'
-    $lbl1.AutoSize = $true
-    $form.Controls.Add($lbl1)
 
-    $txtServer = New-Object Windows.Forms.TextBox
-    $txtServer.Size = '250,20'
-    $txtServer.Location = '150,18'
-    $txtServer.Text = $config.RdpServer
-    $form.Controls.Add($txtServer)
+    [int]$y = 20
 
-    $lbl2 = New-Object Windows.Forms.Label
-    $lbl2.Text = "RDP-Datei:"
-    $lbl2.Location = '10,55'
-    $lbl2.AutoSize = $true
-    $form.Controls.Add($lbl2)
+    function Add-Label($text, [ref]$yRef) {
+        $label = New-Object Windows.Forms.Label
+        $label.Text = $text
+        $label.Location = "10,$($yRef.Value)"
+        $label.AutoSize = $true
+        $form.Controls.Add($label)
+        $yRef.Value += 30
+        return $label
+    }
 
-    $txtFile = New-Object Windows.Forms.TextBox
-    $txtFile.Size = '220,20'
-    $txtFile.Location = '150,53'
-    $txtFile.Text = $config.RdpFile
-    $form.Controls.Add($txtFile)
+    function Add-Textbox($x, [ref]$yRef, $value, $optional = $true) {
+        $tb = New-Object Windows.Forms.TextBox
+        $tb.Size = '350,20'
+        $tb.Location = "$x,$($yRef.Value - 30)"
+
+        if ($optional -and [string]::IsNullOrWhiteSpace($value)) {
+            $tb.ForeColor = [System.Drawing.Color]::Gray
+            $tb.Text = "(optional)"
+            $tb.Tag = "placeholder"
+
+            $tb.Add_GotFocus({
+                if ($tb.Tag -eq "placeholder") {
+                    $tb.Text = ""
+                    $tb.ForeColor = [System.Drawing.Color]::Black
+                    $tb.Tag = ""
+                }
+            })
+
+            $tb.Add_LostFocus({
+                if ([string]::IsNullOrWhiteSpace($tb.Text)) {
+                    $tb.Text = "(optional)"
+                    $tb.ForeColor = [System.Drawing.Color]::Gray
+                    $tb.Tag = "placeholder"
+                }
+            })
+        } else {
+            $tb.Text = $value
+            $tb.Tag = ""
+        }
+
+        $form.Controls.Add($tb)
+        return $tb
+    }
+
+    function Add-Checkbox($labelText, [ref]$yRef, $checked) {
+        $label = New-Object Windows.Forms.Label
+        $label.Text = $labelText
+        $label.Location = New-Object System.Drawing.Point(10, $yRef.Value)
+        $label.AutoSize = $true
+        $form.Controls.Add($label)
+
+        $cbY = $yRef.Value - 3
+        $cb = New-Object Windows.Forms.CheckBox
+        $cb.Location = New-Object System.Drawing.Point(250, $cbY)
+        $cb.Checked = $checked
+        $form.Controls.Add($cb)
+
+        $yRef.Value += 30
+        return $cb
+    }
+
+    # RDP Server
+    Add-Label "RDP-Server:" ([ref]$y) | Out-Null
+    $txtServer = Add-Textbox 180 ([ref]$y) $config.RdpServer $false
+
+    # RDP-Datei
+    Add-Label "RDP-Datei:" ([ref]$y) | Out-Null
+    $txtFile = Add-Textbox 180 ([ref]$y) $config.RdpFile
 
     $picBrowse = New-Object Windows.Forms.PictureBox
     $picBrowse.Size = '20,20'
-    $picBrowse.Location = '380,53'
+    $picBrowse.Location = '540,' + ($y - 30)
     $picBrowse.Image = Get-IconFromDll -dllPath $dll -iconIndex 203
     $picBrowse.SizeMode = 'StretchImage'
     $picBrowse.Cursor = [System.Windows.Forms.Cursors]::Hand
@@ -132,110 +217,169 @@ function Show-ConfigForm {
         $dialog.Filter = "RDP-Dateien (*.rdp)|*.rdp"
         if ($dialog.ShowDialog() -eq "OK") {
             $txtFile.Text = $dialog.FileName
+            $txtFile.ForeColor = [System.Drawing.Color]::Black
+            $txtFile.Tag = ""
         }
     })
+
     $form.Controls.Add($picBrowse)
 
-    $chkFullscreen = New-Object Windows.Forms.CheckBox
-    $chkFullscreen.Text = "Vollbildmodus"
-    $chkFullscreen.Location = '150,90'
-    $chkFullscreen.AutoSize = $true
-    $chkFullscreen.Checked = $config.Fullscreen
-    $form.Controls.Add($chkFullscreen)
+    # Gateway
+    Add-Label "Gateway:" ([ref]$y) | Out-Null
+    $txtGateway = Add-Textbox 180 ([ref]$y) $config.Gateway
 
-    $chkMultiMon = New-Object Windows.Forms.CheckBox
-    $chkMultiMon.Text = "Mehrere Anzeigen"
-    $chkMultiMon.Location = '150,120'
-    $chkMultiMon.AutoSize = $true
-    $chkMultiMon.Checked = $config.MultiMon
-    $form.Controls.Add($chkMultiMon)
+    # Breite
+    Add-Label "Fensterbreite:" ([ref]$y) | Out-Null
+    $txtWidth = Add-Textbox 180 ([ref]$y) $config.Width
 
-    $chkKiosk = New-Object Windows.Forms.CheckBox
-    $chkKiosk.Text = "Kiosk-Modus"
-    $chkKiosk.Location = '150,150'
-    $chkKiosk.AutoSize = $true
-    $chkKiosk.Checked = $config.KioskMode
+    # Höhe
+    Add-Label "Fensterhöhe:" ([ref]$y) | Out-Null
+    $txtHeight = Add-Textbox 180 ([ref]$y) $config.Height
+
+    # Shadow-ID
+    Add-Label "Shadow-ID:" ([ref]$y) | Out-Null
+    $txtShadow = Add-Textbox 180 ([ref]$y) $config.ShadowID
+
+    # Checkbox-Parameter
+    $chkFullscreen      = Add-Checkbox "Vollbildmodus:" ([ref]$y) $config.Fullscreen
+    $chkMultiMon        = Add-Checkbox "Mehrere Monitore:" ([ref]$y) $config.MultiMon
+    $chkPrompt          = Add-Checkbox "Anmeldeaufforderung:" ([ref]$y) $config.Prompt
+    $chkPublic          = Add-Checkbox "Öffentlicher Modus:" ([ref]$y) $config.Public
+    $chkAdmin           = Add-Checkbox "Administratorsitzung:" ([ref]$y) $config.Admin
+    $chkRestricted      = Add-Checkbox "Eingeschränkter Admin:" ([ref]$y) $config.RestrictedAdmin
+    $chkRemoteGuard     = Add-Checkbox "Remote Guard:" ([ref]$y) $config.RemoteGuard
+    $chkControl         = Add-Checkbox "Steuerung erlauben:" ([ref]$y) $config.Control
+    $chkNoConsentPrompt = Add-Checkbox "Ohne Zustimmung:" ([ref]$y) $config.NoConsentPrompt
+
+    $chkKiosk = Add-Checkbox "Kiosk-Modus" ([ref]$y) $config.KioskMode
     $chkKiosk.Add_CheckedChanged({
         if ($chkKiosk.Checked -ne $config.KioskMode) {
             [System.Windows.Forms.MessageBox]::Show("Die Änderung wird nach einem Neustart aktiv und erfordert Administratorrechte beim Speichern.", "Hinweis", "OK", "Information")
         }
     })
-    $form.Controls.Add($chkKiosk)
 
+    $chkDisablePwSave = Add-Checkbox "Passwortspeicherung deaktivieren" ([ref]$y) $config.DisablePasswordSaving
+    $chkDisablePwSave.Add_CheckedChanged({
+        if ($chkDisablePwSave.Checked -ne $config.DisablePasswordSaving) {
+            [System.Windows.Forms.MessageBox]::Show("Passwortspeicherung wird deaktiviert. Diese Änderung erfordert Administratorrechte und wird beim Speichern wirksam.", "Hinweis", "OK", "Information")
+        }
+    })
+
+
+    # Buttons
     $btnSave = New-Object Windows.Forms.Button
     $btnSave.Text = "Speichern"
-    $btnSave.Location = '150,200'
+    $btnSave.Location = '180,' + $y
     $btnSave.Size = '100,30'
     $btnSave.Add_Click({
-        $originalConfig = Load-Config
 
-        $config.RdpServer = $txtServer.Text
-        $config.RdpFile = $txtFile.Text
-        $config.Fullscreen = $chkFullscreen.Checked
-        $config.MultiMon = $chkMultiMon.Checked
-        $config.KioskMode = $chkKiosk.Checked
+    $originalConfig = Load-Config
 
-        $kioskChanged = $originalConfig.KioskMode -ne $chkKiosk.Checked
+    # Texte auslesen mit Platzhalterprüfung
+    $config.RdpServer       = $txtServer.Text
+    $config.RdpFile         = if ($txtFile.Tag -eq "placeholder") { "" } else { $txtFile.Text }
+    $config.Gateway         = if ($txtGateway.Tag -eq "placeholder") { "" } else { $txtGateway.Text }
+    $config.Width           = if ($txtWidth.Tag -eq "placeholder") { "" } else { $txtWidth.Text }
+    $config.Height          = if ($txtHeight.Tag -eq "placeholder") { "" } else { $txtHeight.Text }
+    $config.ShadowID        = if ($txtShadow.Tag -eq "placeholder") { "" } else { $txtShadow.Text }
+
+    # Checkbox-Werte
+    $config.Fullscreen      = $chkFullscreen.Checked
+    $config.MultiMon        = $chkMultiMon.Checked
+    $config.Prompt          = $chkPrompt.Checked
+    $config.Public          = $chkPublic.Checked
+    $config.Admin           = $chkAdmin.Checked
+    $config.RestrictedAdmin = $chkRestricted.Checked
+    $config.RemoteGuard     = $chkRemoteGuard.Checked
+    $config.Control         = $chkControl.Checked
+    $config.NoConsentPrompt = $chkNoConsentPrompt.Checked
+    $config.KioskMode       = $chkKiosk.Checked
+    $config.DisablePasswordSaving = $chkDisablePwSave.Checked
+
+    $kioskChanged     = $originalConfig.KioskMode -ne $chkKiosk.Checked
+    $pwSaveChanged    = $originalConfig.DisablePasswordSaving -ne $chkDisablePwSave.Checked
+
+    if ($kioskChanged -or $pwSaveChanged) {
+        $adminScript = ""
 
         if ($kioskChanged) {
-    $desiredShell = if ($chkKiosk.Checked) { "rdp-connect.exe" } else { "explorer.exe" }
+            $desiredShell = if ($chkKiosk.Checked) { "rdp-connect.exe" } else { "explorer.exe" }
 
-    # Generiere das Kopier- und Registry-Setz-Skript
-    if ($chkKiosk.Checked) {
-        # → Kiosk aktivieren
-        $adminScript = @"
-    `$regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    Set-ItemProperty -Path `$regPath -Name 'Shell' -Value 'rdp-connect.exe'
+            if ($chkKiosk.Checked) {
+                # Kiosk aktivieren
+                $adminScript += @"
+`$regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-ItemProperty -Path `$regPath -Name 'Shell' -Value 'rdp-connect.exe'
 
-    `$systemExe = '$SystemExePath'
-    if (-not (Test-Path `$systemExe)) {
-        `$source = '$LocalExePath'
-        Copy-Item -Path `$source -Destination `$systemExe -Force
+`$systemExe = '$SystemExePath'
+if (-not (Test-Path `$systemExe)) {
+    `$source = '$LocalExePath'
+    Copy-Item -Path `$source -Destination `$systemExe -Force
+}
+
+`$desktop = [Environment]::GetFolderPath('Desktop')
+`$shortcutPath = Join-Path `$desktop 'RDP Connect.lnk'
+if (Test-Path `$shortcutPath) { Remove-Item `$shortcutPath -Force }
+
+`$WshShell = New-Object -ComObject WScript.Shell
+`$Shortcut = `$WshShell.CreateShortcut(`$shortcutPath)
+`$Shortcut.TargetPath = '$SystemExePath'
+`$Shortcut.WorkingDirectory = Split-Path '$SystemExePath'
+`$Shortcut.IconLocation = '$SystemExePath,0'
+`$Shortcut.Save()
+"@
+            } else {
+                # Kiosk deaktivieren
+                $adminScript += @"
+`$regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-ItemProperty -Path `$regPath -Name 'Shell' -Value 'explorer.exe'
+"@
+            }
+        }
+
+        if ($pwSaveChanged) {
+            $regPwPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+            $disablePw = if ($chkDisablePwSave.Checked) { 1 } else { 0 }
+
+            $adminScript += @"
+`$pwPath = '$regPwPath'
+if (-not (Test-Path `$pwPath)) {
+    New-Item -Path `$pwPath -Force | Out-Null
+}
+Set-ItemProperty -Path `$pwPath -Name 'DisablePasswordSaving' -Type DWord -Value $disablePw
+"@
+        }
+
+        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($adminScript))
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -NoProfile -EncodedCommand $encoded" -Verb RunAs
+
+        if ($kioskChanged) {
+            if ($chkKiosk.Checked) {
+                [System.Windows.Forms.MessageBox]::Show("Kiosk-Modus wurde aktiviert. Änderungen werden nach dem nächsten Neustart aktiv. Mit Strg + Alt + C kann der Kiosk-Modus wieder deaktiviert werden.", "Kiosk-Modus", "OK", "Information")
+            } else {
+                [System.Windows.Forms.MessageBox]::Show("Kiosk-Modus wurde deaktiviert. Der normale Desktop wird beim nächsten Neustart geladen.", "Kiosk-Modus", "OK", "Information")
+            }
+        }
+
+        if ($pwSaveChanged -and $chkDisablePwSave.Checked) {
+            [System.Windows.Forms.MessageBox]::Show("Passwortspeicherung wurde deaktiviert. Benutzer müssen sich künftig bei jeder RDP-Sitzung erneut anmelden.", "Passwortspeicherung", "OK", "Information")
+        }
     }
 
-    `$desktop = [Environment]::GetFolderPath('Desktop')
-    `$shortcutPath = Join-Path `$desktop 'RDP Connect.lnk'
-    if (Test-Path `$shortcutPath) { Remove-Item `$shortcutPath -Force }
-
-    `$WshShell = New-Object -ComObject WScript.Shell
-    `$Shortcut = `$WshShell.CreateShortcut(`$shortcutPath)
-    `$Shortcut.TargetPath = '$SystemExePath'
-    `$Shortcut.WorkingDirectory = Split-Path '$SystemExePath'
-    `$Shortcut.IconLocation = '$SystemExePath,0'
-    `$Shortcut.Save()
-"@
-    } else {
-        # → Kiosk deaktivieren (nur Shell zurücksetzen)
-        $adminScript = @"
-    `$regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    Set-ItemProperty -Path `$regPath -Name 'Shell' -Value 'explorer.exe'
-"@
-}
-    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($adminScript))
-    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -NoProfile -EncodedCommand $encoded" -Verb RunAs
-
-    if ($chkKiosk.Checked) {
-        [System.Windows.Forms.MessageBox]::Show("Kiosk-Modus wurde aktiviert. Änderungen werden nach dem nächsten Neustart aktiv. Mit Strg + Alt + C kann der Kiosk-Modus wieder deaktiviert werden.", "Kiosk-Modus", "OK", "Information")
-    } else {
-        [System.Windows.Forms.MessageBox]::Show("Kiosk-Modus wurde deaktiviert. Der normale Desktop wird beim nächsten Neustart geladen.", "Kiosk-Modus", "OK", "Information")
-}
-
-}
-        Save-Config -config $config
-        $form.Close()
-    })
+    Save-Config -config $config
+    $form.Close()
+})
     $form.Controls.Add($btnSave)
 
     $btnCancel = New-Object Windows.Forms.Button
     $btnCancel.Text = "Abbrechen"
-    $btnCancel.Location = '260,200'
+    $btnCancel.Location = '300,' + $y
     $btnCancel.Size = '100,30'
     $btnCancel.Add_Click({ $form.Close() })
     $form.Controls.Add($btnCancel)
 
     $form.ShowDialog()
 }
-
 
 function Show-GUI {
     $config = Load-Config
@@ -251,9 +395,9 @@ function Show-GUI {
     $form.KeyPreview = $true
 
     $form.add_FormClosing({
-    $_.Cancel = $true  # verhindert das Schließen
-    $form.Hide()       # optional: stattdessen einfach verstecken
-})
+        $_.Cancel = $true
+        $form.Hide()
+    })
 
     $dll = "C:\Windows\System32\imageres.dll"
     $form.Icon = Get-FormIcon -dllPath $dll -iconIndex 170
@@ -273,16 +417,26 @@ function Show-GUI {
     $btnLogin.Add_Click({
         $cfg = Load-Config
         $args = @()
+
         if (![string]::IsNullOrWhiteSpace($cfg.RdpFile) -and (Test-Path $cfg.RdpFile)) {
             $args += "`"$($cfg.RdpFile)`""
         }
-        if ($cfg.RdpServer) {
-            $args += "/v:$($cfg.RdpServer)"
-        }
+
+        if ($cfg.RdpServer) { $args += "/v:$($cfg.RdpServer)" }
+        if ($cfg.Gateway)   { $args += "/g:$($cfg.Gateway)" }
         if ($cfg.Fullscreen) { $args += "/f" }
-        if ($cfg.MultiMon) { $args += "/multimon" }
-        $args += "/public"
-        $args += "/prompt"
+        if ($cfg.Width)     { $args += "/w:$($cfg.Width)" }
+        if ($cfg.Height)    { $args += "/h:$($cfg.Height)" }
+        if ($cfg.Public)    { $args += "/public" }
+        if ($cfg.MultiMon)  { $args += "/multimon" }
+        if ($cfg.Admin)     { $args += "/admin" }
+        if ($cfg.Prompt)    { $args += "/prompt" }
+        if ($cfg.RestrictedAdmin) { $args += "/restrictedAdmin" }
+        if ($cfg.RemoteGuard)     { $args += "/remoteGuard" }
+        if ($cfg.ShadowID)  { $args += "/shadow:$($cfg.ShadowID)" }
+        if ($cfg.Control)   { $args += "/control" }
+        if ($cfg.NoConsentPrompt) { $args += "/noConsentPrompt" }
+
         Start-Process "mstsc.exe" -ArgumentList $args
         $form.Hide()
     })
